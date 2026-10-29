@@ -1,16 +1,10 @@
 require("dotenv").config();
 const pool = require("./config/db");
+const connectMongo = require("./config/mongo");
+const gestionErreurs = require("./middlewares/erreurs");
 
 const express = require("express");
 const app = express();
-
-pool.query("SELECT NOW()")
-    .then(() => {
-        console.log("Connecté à PostgreSQL !");
-    })
-    .catch((erreur) => {
-        console.error("Erreur de connexion :", erreur.message);
-    });
 
 const productRoutes = require("./routes/product.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
@@ -36,6 +30,26 @@ app.use((req, res) => {
     res.status(404).json({ message: "Page introuvable" });
 });
 
-app.listen(process.env.PORT || 3000, () => {
-    console.log("Serveur lance sur le port 3000");
-});
+// Le middleware d'erreurs se déclare après toutes les routes
+app.use(gestionErreurs);
+
+// On se connecte aux deux bases AVANT d'ouvrir le serveur.
+// Si l'une des deux échoue, on arrête tout : une API à moitié connectée est pire qu'une API éteinte.
+async function demarrer() {
+    try {
+        await pool.query("SELECT NOW()");
+        console.log("Connecté à PostgreSQL !");
+
+        await connectMongo();
+
+        const port = process.env.PORT || 3000;
+        app.listen(port, () => {
+            console.log(`Serveur lance sur le port ${port}`);
+        });
+    } catch (erreur) {
+        console.error("Démarrage impossible :", erreur.message);
+        process.exit(1);
+    }
+}
+
+demarrer();

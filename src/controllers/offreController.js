@@ -1,4 +1,5 @@
 const Offre = require("../models/Offre");
+const FicheTechnique = require("../models/FicheTechnique");
 
 // Renvoie l'id sous forme de nombre s'il est valide, sinon null
 function lireId(valeur) {
@@ -53,7 +54,9 @@ class OffreController {
             if(!offres){
                 return res.status(404).json({ erreur: "Offre introuvable" });
             }
-            res.json(offres)
+            // Réponse construite à partir des deux bases : l'offre (PostgreSQL) + sa fiche technique (MongoDB)
+            const fiche = await FicheTechnique.findByOffre(id);
+            res.json({ ...offres, fiche_technique: fiche })
         } catch(erreur){
             res.status(500).json({ erreur: "Erreur serveur" })
         }
@@ -103,6 +106,13 @@ class OffreController {
             const offres = await Offre.delete(id);
             if(!offres){
                 return res.status(404).json({ erreur: "Offre introuvable" });
+            }
+            // L'offre est supprimée dans PostgreSQL : on supprime aussi sa fiche dans MongoDB.
+            // Si ça échoue, l'offre reste supprimée et la fiche devient orpheline (sans danger, voir docs/arbitrage.md).
+            try {
+                await FicheTechnique.deleteOne({ offreId: id });
+            } catch (erreurMongo) {
+                console.error(`Fiche technique de l'offre ${id} non supprimée :`, erreurMongo.message);
             }
             res.status(200).json({message: "Supprimée avec succès"});
         }catch(erreur){

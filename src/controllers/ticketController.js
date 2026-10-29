@@ -1,4 +1,6 @@
 const Ticket = require("../models/Ticket");
+const Technicien = require("../models/Technicien");
+const Message = require("../models/Message");
 
 // Renvoie l'id sous forme de nombre s'il est valide, sinon null
 function lireId(valeur) {
@@ -23,7 +25,57 @@ exports.getTicket = async (req, res) => {
         return res.status(404).json({ message: "Ticket introuvable" });
     }
 
-    res.status(200).json(ticket);
+    // Réponse construite à partir des deux bases : le ticket (PostgreSQL) + son fil de messages (MongoDB)
+    const messages = await Message.findByTicket(id);
+
+    res.status(200).json({ ...ticket, messages });
+};
+
+// POST /api/tickets/:id/messages
+exports.addMessage = async (req, res) => {
+    const id = lireId(req.params.id);
+    const { auteur, contenu, piecesJointes } = req.body ?? {};
+
+    if (!id) {
+        return res.status(400).json({ message: "Id de ticket invalide" });
+    }
+    if (!auteur || !auteur.role || auteur.id === undefined || !estTexteRempli(contenu)) {
+        return res.status(400).json({ message: "Champs obligatoires : auteur { role, id }, contenu" });
+    }
+
+    const idAuteur = lireId(auteur.id);
+    if (!idAuteur) {
+        return res.status(400).json({ message: "auteur.id doit être un entier positif" });
+    }
+    if (auteur.role !== "client" && auteur.role !== "technicien") {
+        return res.status(422).json({ message: "auteur.role doit valoir client ou technicien" });
+    }
+
+    // Lien entre les deux bases : on vérifie tout dans PostgreSQL avant d'écrire dans MongoDB
+    const ticket = await Ticket.findById(id);
+    if (!ticket) {
+        return res.status(404).json({ message: "Ticket introuvable" });
+    }
+    if (ticket.statut === "ferme") {
+        return res.status(409).json({ message: "Ce ticket est fermé, il n'accepte plus de messages" });
+    }
+
+    if (auteur.role === "client" && idAuteur !== ticket.id_client) {
+        return res.status(422).json({ message: "Ce client n'est pas celui qui a ouvert le ticket" });
+    }
+    if (auteur.role === "technicien" && !(await Technicien.findById(idAuteur))) {
+        return res.status(404).json({ message: "Technicien introuvable" });
+    }
+
+    // Les pièces jointes sont vérifiées par Mongoose (nom et url obligatoires -> 422 sinon)
+    const message = await Message.create({
+        ticketId: id,
+        auteur: { role: auteur.role, id: idAuteur },
+        contenu,
+        piecesJointes,
+    });
+
+    res.status(201).json(message);
 };
 
 exports.createTicket = async (req, res) => {
